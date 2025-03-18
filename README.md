@@ -75,7 +75,7 @@ Uplink Fire is a Python-based desktop application designed for fast, automated f
     * "Force Quit Webdriver" will close the webdriver.
 5.  **Timing Controls:**
     * **Wait Duration:** Adjust the maximum time the WebDriver waits for components. Only increase if you have a slow internet connection.
-    * **Upload Duration:** Adjust the maximum time allotted for file uploading. Files exceeding this time will be interrupted.
+    * **Upload Duration:** Adjust the maximum time allotted for file uploading. Uploads exceeding this time will be interrupted. (It's recommended to use a large value)
     * **Captcha Duration:** Adjust the maximum time given for filling the reCAPTCHA during registration.
 
 ## 🕷 Troubleshooting
