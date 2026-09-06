@@ -1,6 +1,0 @@
-{
-    "wait_duration": 20,
-    "upload_duration": 7200,
-    "captcha_duration": 120,
-    "auto_logout": false
-}
