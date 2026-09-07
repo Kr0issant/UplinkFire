@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent / "database.db"
+TEMP_DIR_PATH = Path(__file__).resolve().parent.parent / "temp"
+DEFAULT_CHUNK_SIZE = 512  # MiB
 
 default_settings = [
     ("timeout_duration", "20"),
@@ -11,6 +13,8 @@ default_settings = [
     ("auto_logout", "False"),
     ("first_name", "John"),
     ("last_name", "Doe"),
+    ("temp_dir_path", str(TEMP_DIR_PATH)),
+    ("chunk_size", str(DEFAULT_CHUNK_SIZE))
 ]
 
 class Database:
@@ -193,4 +197,6 @@ class Database:
             params.append(account_id)
 
         self.run_write_query(query, params)
-        
+
+db = Database()
+db.add_account("tileb67037@hebase.com", "tileb67037@hebase.com")
