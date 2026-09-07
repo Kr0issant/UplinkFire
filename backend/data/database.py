@@ -5,10 +5,12 @@ from pathlib import Path
 DB_PATH = Path(__file__).resolve().parent / "database.db"
 
 default_settings = [
-    ("wait_duration", "20"),
+    ("timeout_duration", "20"),
     ("upload_duration", "7200"),
     ("captcha_duration", "120"),
-    ("auto_logout", "False")
+    ("auto_logout", "False"),
+    ("first_name", "John"),
+    ("last_name", "Doe"),
 ]
 
 class Database:
@@ -60,122 +62,96 @@ class Database:
         conn.execute("PRAGMA journal_mode = WAL;")
         return conn
 
+    def run_read_query(self, query: str, params: list | tuple = None, n: int = 1) -> sqlite3.Row | list[sqlite3.Row]:
+        if params is None: params = []
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+
+            if n == 0:
+                return cursor.fetchall()
+            elif n == 1:
+                return cursor.fetchone()
+            else:
+                return cursor.fetchmany(n)
+
+    def run_write_query(self, query: str, params: list | tuple = None):
+        if params is None: params = []
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            conn.commit()
+
     # === Settings ===
 
     def get_setting(self, setting: str, cast_to: type = str, default = None) -> any:
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT value FROM settings WHERE key = ?", (setting,))
-            row = cursor.fetchone()
-
-            return default if row is None else cast_to(row[0])
+        row = self.run_read_query("SELECT value FROM settings WHERE key = ?", (setting,), 1)
+        return default if row is None else cast_to(row[0])
         
     def set_setting(self, setting: str, value: any):
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", 
-                (setting, str(value))
-            )
-            conn.commit()
+        self.run_write_query("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (setting, str(value)))
 
     # === Accounts ===
 
     def get_account(self, id: str) -> sqlite3.Row:
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM accounts WHERE id = ?", (id,))
-            row = cursor.fetchone()
-
-            return row
+        return self.run_read_query("SELECT * FROM accounts WHERE id = ?", (id,), 1)
 
     def get_accounts(self, min_free_space: int = None) -> list[sqlite3.Row]:
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            if min_free_space is not None:
-                cursor.execute("SELECT * FROM accounts WHERE free_space >= ?", (min_free_space,))
-            else:
-                cursor.execute("SELECT * FROM accounts")
-            rows = cursor.fetchall()
-        
-            return rows
+        if min_free_space is not None:
+            return self.run_read_query("SELECT * FROM accounts WHERE free_space >= ?", (min_free_space,), 0)
+        else:
+            return self.run_read_query("SELECT * FROM accounts", n = 0)
 
     def add_account(self, email: str, password: str, free_space: int = 10000000000) -> str:
         id = uuid.uuid4().hex
         timestamp = datetime.now(timezone.utc).isoformat()
         
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO accounts (id, email, password, free_space, created_at, last_accessed) VALUES (?, ?, ?, ?, ?, ?)",
-                (id, email, password, free_space, timestamp, timestamp)
-            )
-            conn.commit()
+        self.run_write_query(
+            "INSERT INTO accounts (id, email, password, free_space, created_at, last_accessed) VALUES (?, ?, ?, ?, ?, ?)",
+            (id, email, password, free_space, timestamp, timestamp)
+        )
 
         return id
 
-    def update_account_space(self, id: str, free_space: int):
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("UPDATE accounts SET free_space = ? WHERE id = ?", (free_space, id))
-            conn.commit()
+    def update_account_free_space(self, id: str, free_space: int):
+        self.run_write_query("UPDATE accounts SET free_space = ? WHERE id = ?", (free_space, id))
+
+    def update_account_last_accessed(self, id: str):
+        timestamp = datetime.now(timezone.utc).isoformat()
+        self.run_write_query("UPDATE accounts SET last_accessed = ? WHERE id = ?", (timestamp, id))
 
     def delete_account(self, id: str):
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM accounts WHERE id = ?", (id,))
-            conn.commit()
+        self.run_write_query("DELETE FROM accounts WHERE id = ?", (id,))
 
     # === Files ===
 
     def get_file(self, id: str) -> sqlite3.Row:
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM files WHERE id = ?", (id,))
-            row = cursor.fetchone()
-
-            return row
+        return self.run_read_query("SELECT * FROM files WHERE id = ?", (id,), 1)
 
     def get_files(self, file_name: str = None) -> list[sqlite3.Row]:
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            if file_name is not None:
-                cursor.execute("SELECT * FROM files WHERE file_name = ?", (file_name,))
-            else:
-                cursor.execute("SELECT * FROM files")
-            rows = cursor.fetchall()
-        
-            return rows
+        if file_name is not None:
+            return self.run_read_query("SELECT * FROM files WHERE file_name = ?", (file_name,), 0)
+        else:
+            return self.run_read_query("SELECT * FROM files", n = 0)
 
     def add_file(self, file_name: str, size: int, chunk_size: int, num_chunks: int) -> str:
         id = uuid.uuid4().hex
         timestamp = datetime.now(timezone.utc).isoformat()
 
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO files (id, file_name, size, chunk_size, num_chunks, upload_datetime) VALUES (?, ?, ?, ?, ?, ?)",
-                (id, file_name, size, chunk_size, num_chunks, timestamp)
-            )
-            conn.commit()
+        self.run_write_query(
+            "INSERT INTO files (id, file_name, size, chunk_size, num_chunks, upload_datetime) VALUES (?, ?, ?, ?, ?, ?)",
+            (id, file_name, size, chunk_size, num_chunks, timestamp)
+        )
 
         return id
 
     def delete_file(self, id: str):
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM files WHERE id = ?", (id,))
-            conn.commit()
+        self.run_write_query("DELETE FROM files WHERE id = ?", (id,))
 
     # === File Chunks ===
 
     def get_chunk(self, id: str) -> sqlite3.Row:
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM file_chunks WHERE id = ?", (id,))
-            row = cursor.fetchone()
-
-            return row
+        return self.run_read_query("SELECT * FROM file_chunks WHERE id = ?", (id,), 1)
 
     def get_chunks(self, file_id: str = None, account_id: str = None) -> list[sqlite3.Row]:
         query = "SELECT * FROM file_chunks WHERE 1=1"
@@ -188,33 +164,22 @@ class Database:
             query += " AND account_id = ?"
             params.append(account_id)
 
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, tuple(params))
-            rows = cursor.fetchall()
-        
-            return rows
+        return self.run_read_query(query, params, 0)
 
     def add_chunk(self, file_id: str, account_id: str, chunk_no: int, size: int, download_url: str) -> str:
         id = uuid.uuid4().hex
 
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO file_chunks (id, file_id, account_id, chunk_no, size, download_url) VALUES (?, ?, ?, ?, ?, ?)",
-                (id, file_id, account_id, chunk_no, size, download_url)
-            )
-            conn.commit()
+        self.run_write_query(
+            "INSERT INTO file_chunks (id, file_id, account_id, chunk_no, size, download_url) VALUES (?, ?, ?, ?, ?, ?)",
+            (id, file_id, account_id, chunk_no, size, download_url)
+        )
 
         return id
 
     def delete_chunk(self, id: str):
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM file_chunks WHERE id = ?", (id,))
-            conn.commit()
+        self.run_write_query("DELETE FROM file_chunks WHERE id = ?", (id,))
 
-    def delete_chunks(self, file_id: str, account_id: str):
+    def delete_chunks(self, file_id: str = None, account_id: str = None):
         query = "DELETE FROM file_chunks WHERE 1=1"
         params = []
 
@@ -227,8 +192,5 @@ class Database:
             query += " AND account_id = ?"
             params.append(account_id)
 
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, tuple(params))
-            conn.commit()
-    
+        self.run_write_query(query, params)
+        
