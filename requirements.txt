@@ -1,3 +1,0 @@
-MailTm==0.0.81
-pyperclip==1.9.0
-selenium==4.29.0
