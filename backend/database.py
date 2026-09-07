@@ -38,12 +38,14 @@ class Database:
                 );
                 CREATE TABLE IF NOT EXISTS file_chunks (
                     id TEXT PRIMARY KEY,
-                    file_id TEXT REFERENCES files(id),
-                    account_id TEXT REFERENCES accounts(id),
+                    file_id TEXT REFERENCES files(id) ON DELETE CASCADE,
+                    account_id TEXT REFERENCES accounts(id) ON DELETE CASCADE,
                     chunk_no INT,
                     size INT,
                     download_url TEXT
                 );
+                CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON file_chunks(file_id);
+                CREATE INDEX IF NOT EXISTS idx_chunks_account_id ON file_chunks(account_id);
             ''')
             cursor.executemany(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
@@ -56,6 +58,8 @@ class Database:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON;")
         return conn
+
+    # === Settings ===
 
     def get_setting(self, setting: str, cast_to: type = str, default = None) -> any:
         with self._connect() as conn:
@@ -73,6 +77,8 @@ class Database:
                 (setting, str(value))
             )
             conn.commit()
+
+    # === Accounts ===
 
     def get_account(self, id: str) -> sqlite3.Row:
         with self._connect() as conn:
@@ -93,7 +99,7 @@ class Database:
         
             return rows
 
-    def add_account(self, email: str, password: str, free_space: int = 10000000000):
+    def add_account(self, email: str, password: str, free_space: int = 10000000000) -> str:
         id = uuid.uuid4().hex
         timestamp = datetime.now(timezone.utc).isoformat()
         
@@ -105,4 +111,129 @@ class Database:
             )
             conn.commit()
 
+        return id
+
+    def update_account_space(self, id: str, free_space: int):
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE accounts SET free_space = ? WHERE id = ?", (free_space, id))
+            conn.commit()
+
+    def delete_account(self, id: str):
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM accounts WHERE id = ?", (id,))
+            conn.commit()
+
+    # === Files ===
+
+    def get_file(self, id: str) -> sqlite3.Row:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM files WHERE id = ?", (id,))
+            row = cursor.fetchone()
+
+            return row
+
+    def get_files(self, file_name: str = None) -> list[sqlite3.Row]:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            if file_name is not None:
+                cursor.execute("SELECT * FROM files WHERE file_name = ?", (file_name,))
+            else:
+                cursor.execute("SELECT * FROM files")
+            rows = cursor.fetchall()
+        
+            return rows
+
+    def add_file(self, file_name: str, size: int, chunk_size: int, num_chunks: int) -> str:
+        id = uuid.uuid4().hex
+        timestamp = datetime.now(timezone.utc).isoformat()
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO files (id, file_name, size, chunk_size, num_chunks, upload_datetime) VALUES (?, ?, ?, ?, ?, ?)",
+                (id, file_name, size, chunk_size, num_chunks, timestamp)
+            )
+            conn.commit()
+
+        return id
+
+    def delete_file(self, id: str):
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM files WHERE id = ?", (id,))
+            conn.commit()
+
+    # === File Chunks ===
+
+    def get_chunk(self, id: str) -> sqlite3.Row:
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM file_chunks WHERE id = ?", (id,))
+            row = cursor.fetchone()
+
+            return row
+
+    def get_chunks(self, file_id: str = None, account_id: str = None) -> list[sqlite3.Row]:
+        query = "SELECT * FROM file_chunks WHERE 1=1"
+        params = []
+
+        if file_id is not None:
+            query += " AND file_id = ?"
+            params.append(file_id)
+        if account_id is not None:
+            query += " AND account_id = ?"
+            params.append(account_id)
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            rows = cursor.fetchall()
+        
+            return rows
+
+    def add_chunk(self, file_id: str, account_id: str, chunk_no: int, size: int, download_url: str) -> str:
+        id = uuid.uuid4().hex
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO file_chunks (id, file_id, account_id, chunk_no, size, download_url) VALUES (?, ?, ?, ?, ?, ?)",
+                (id, file_id, account_id, chunk_no, size, download_url)
+            )
+            conn.commit()
+
+        return id
+
+    def delete_chunk(self, id: str):
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM file_chunks WHERE id = ?", (id,))
+            conn.commit()
+
+    def delete_chunks(self, file_id: str, account_id: str):
+        query = "DELETE FROM file_chunks WHERE 1=1"
+        params = []
+
+        if file_id is None and account_id is None:
+            return
+        if file_id is not None:
+            query += " AND file_id = ?"
+            params.append(file_id)
+        if account_id is not None:
+            query += " AND account_id = ?"
+            params.append(account_id)
+
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            conn.commit()
+
+    def delete_chunks_in_account(self, account_id: str):
+        with self._connect() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM file_chunks WHERE account_id = ?", (account_id,))
+            conn.commit()
     
