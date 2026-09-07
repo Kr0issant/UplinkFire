@@ -230,10 +230,4 @@ class Database:
             cursor = conn.cursor()
             cursor.execute(query, tuple(params))
             conn.commit()
-
-    def delete_chunks_in_account(self, account_id: str):
-        with self._connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM file_chunks WHERE account_id = ?", (account_id,))
-            conn.commit()
     
