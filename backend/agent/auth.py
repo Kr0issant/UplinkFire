@@ -5,27 +5,31 @@ from mailtm import Email
 import playwright.async_api as pw
 
 class AuthMixin:
-    async def login(self, context: pw.BrowserContext, account_id: str):
+    async def login(self, context: pw.BrowserContext, account_id: str, tries: int = 2):
         timeout_duration = self.db.get_setting("timeout_duration", int) * 1000
 
         page = await context.new_page()
         try:
-            await page.goto("https://www.mediafire.com/upgrade/registration.php?pid=free", timeout = timeout_duration)
+            await page.goto("https://www.mediafire.com/login/", timeout = timeout_duration)
 
             account = self.db.get_account(account_id)
 
             await page.locator("#widget_login_email").fill(account["email"])
             await page.locator("#widget_login_pass").fill(account["password"])
-            await page.locator(".gbtnTertiary").click()
+            await page.get_by_role("button", name="Log in", exact=True).click()
 
             await page.wait_for_url("https://app.mediafire.com/folder/myfiles", timeout = timeout_duration)
             self.db.update_account_last_accessed(account_id)
+            print(f"Logged into account: {account_id}")
         except Exception as e:
             print(f"Login failed: {e}")
+            if tries > 1:
+                print(f"Retrying {tries - 1} times...")
+                await self.login(context, account_id, tries - 1)
         finally:
             await page.close()
 
-    async def register(self, context: pw.BrowserContext) -> str:
+    async def register(self, context: pw.BrowserContext, tries: int = 1) -> str:
         account_id = ""
         timeout_duration = self.db.get_setting("timeout_duration", int) * 1000
 
@@ -49,8 +53,10 @@ class AuthMixin:
 
             await page.wait_for_url("https://app.mediafire.com/folder/myfiles", timeout = timeout_duration)
             account_id = self.db.add_account(email, password)
+            print(f"Registered account: {account_id}")
         except Exception as e:
             print(f"Registration failed: {e}")
+            if tries > 1: account_id = await self.register(context, tries - 1)
         finally:
             await page.close()
 
