@@ -1,8 +1,8 @@
 import asyncio
 import playwright.async_api as pw
-from auth import AuthMixin
-from upload import UploadMixin
-from download import DownloadMixin
+from agent.auth import AuthMixin
+from agent.upload import UploadMixin
+from agent.download import DownloadMixin
 from data.database import Database
 
 class MediaFireAgent(AuthMixin, UploadMixin, DownloadMixin):
@@ -20,14 +20,12 @@ class MediaFireAgent(AuthMixin, UploadMixin, DownloadMixin):
         await self.init_playwright()
 
         if headless:
-            if self.headless_browser is not None: 
-                await self.headless_browser.close()
-            self.headless_browser = await self._playwright.chromium.launch(headless=True)
+            if self.headless_browser is None:
+                self.headless_browser = await self._playwright.chromium.launch(headless=True)
             return self.headless_browser
         else:
-            if self.headed_browser is not None: 
-                await self.headed_browser.close()
-            self.headed_browser = await self._playwright.chromium.launch(headless=False)
+            if self.headed_browser is None: 
+                self.headed_browser = await self._playwright.chromium.launch(headless=False)
             return self.headed_browser
 
     async def new_context(self, browser: pw.Browser) -> pw.BrowserContext:
