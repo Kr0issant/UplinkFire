@@ -25,14 +25,13 @@ class UploadMixin:
 
             await self._upload_chunks(chunk_paths, file_id)
 
-            await self._upload_chunks(chunk_paths, file_id)
             successful_set = {c["chunk_no"] for c in self.db.get_chunks(file_id=file_id)}
 
             successful_chunk_nos = [n for n in range(total_chunks) if n in successful_set]
             unsuccessful_chunk_nos = [n for n in range(total_chunks) if n not in successful_set]
 
-            if len(unsuccessful_chunk_nos > 0):
-                print(f"File {file_id} ({file_path.name}) uploaded [{len(successful_chunk_nos)}/{len(total_chunks)}] chunks successfully")
+            if len(unsuccessful_chunk_nos) > 0:
+                print(f"File {file_id} ({file_path.name}) uploaded [{len(successful_chunk_nos)}/{total_chunks}] chunks successfully")
                 print(f"Retrying for {len(unsuccessful_chunk_nos)} chunks...")
                 # WIP (retry unsuccessful chunks)
             else:
@@ -48,7 +47,7 @@ class UploadMixin:
         browser = await self.start_browser(headless=True)
         
         chunk_tasks = [
-            {"chunk_no": i + 1, "path": p, "size": p.stat().st_size} 
+            {"chunk_no": i, "path": p, "size": p.stat().st_size} 
             for i, p in enumerate(chunk_paths)
         ]
         
@@ -159,12 +158,13 @@ class UploadMixin:
         download_url = ""
         timeout_duration = self.db.get_setting("timeout_duration", int) * 1000
         chunk_path = Path(chunk_path)
+        chunk_size = chunk_path.stat().st_size
 
         page = await context.new_page()
         try:
             await page.goto("https://app.mediafire.com/folder/myfiles", timeout = timeout_duration)
 
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1)  # Potential source of error (1s might not be enough for the modal to load)
             await page.evaluate("""() => {
                 const dialog = document.querySelector('div[role="dialog"]');
                 if (dialog && dialog.parentElement && dialog.parentElement.parentElement) {
@@ -174,16 +174,16 @@ class UploadMixin:
                 }
             }""")
 
-            await page.get_by_role("button", name="Upload files").click()
+            await page.get_by_role("button", name="Upload files").click(force=True)
             file_input = page.locator('input[type="file"]').first
             await file_input.wait_for(state="attached", timeout=timeout_duration)
             await file_input.set_input_files(chunk_path, timeout=timeout_duration)
 
-            await page.get_by_role("button", name="Start upload").click()
+            await page.get_by_role("button", name="Start upload").click(force=True)
 
-            await self._monitor_upload(page)
+            await self._monitor_upload(page, chunk_size)
 
-            await page.locator('span:has-text("Copy Link")').click()
+            await page.locator('span:has-text("Copy Link")').click(force=True)
             await asyncio.sleep(0.5)
             download_url = await page.evaluate("navigator.clipboard.readText()")
         except Exception as e:
@@ -193,15 +193,15 @@ class UploadMixin:
 
         return download_url
 
-    async def _monitor_upload(self, page: pw.Page) -> bool:
-        pbar = tqdm(total=100, desc="Uploading", unit="%")
-        last_percentage = 0
+    async def _monitor_upload(self, page: pw.Page, file_size: int) -> bool:
+        pbar = tqdm(total=file_size, desc="Uploading", unit="B", unit_scale=True, unit_divisor=1024)
+        last_uploaded_bytes = 0
         timeout_duration = self.db.get_setting("timeout_duration", int) * 1000
 
         while True:
             is_completed = await page.get_by_text("Upload Completed").is_visible(timeout=timeout_duration)
             if is_completed:
-                pbar.update(100 - last_percentage)
+                pbar.update(file_size - last_uploaded_bytes)
                 break
                 
             try:
@@ -209,15 +209,18 @@ class UploadMixin:
                 if await percentage_locator.is_visible(timeout=timeout_duration):
                     percentage_text = await percentage_locator.text_content(timeout=timeout_duration)
                     current_percentage = int(re.search(r'\d+', percentage_text).group())
+
+                    current_uploaded_bytes = int(file_size * (current_percentage / 100))
                     
-                    if current_percentage > last_percentage:
-                        pbar.update(current_percentage - last_percentage)
-                        last_percentage = current_percentage
+                    if current_uploaded_bytes > last_uploaded_bytes:
+                        pbar.update(current_uploaded_bytes - last_uploaded_bytes)
+                        last_uploaded_bytes = current_uploaded_bytes
                     
             except Exception as e:
                 pbar.close()
                 raise e
                 
             await asyncio.sleep(0.2)
+
         pbar.close()
         return
