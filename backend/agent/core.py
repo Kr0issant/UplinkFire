@@ -1,5 +1,6 @@
 import asyncio
 import playwright.async_api as pw
+from playwright_stealth import Stealth
 from agent.auth import AuthMixin
 from agent.upload import UploadMixin
 from agent.download import DownloadMixin
@@ -19,13 +20,28 @@ class MediaFireAgent(AuthMixin, UploadMixin, DownloadMixin):
     async def start_browser(self, headless: bool = True) -> pw.Browser:
         await self.init_playwright()
 
+        browser_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-infobars",
+            "--start-maximized",
+        ]
+        ignore_args = ["--enable-automation"]
+
         if headless:
             if self.headless_browser is None:
-                self.headless_browser = await self._playwright.chromium.launch(headless=True)
+                self.headless_browser = await self._playwright.chromium.launch(
+                    headless=True,
+                    args=browser_args,
+                    ignore_default_args=ignore_args
+                )
             return self.headless_browser
         else:
             if self.headed_browser is None: 
-                self.headed_browser = await self._playwright.chromium.launch(headless=False)
+                self.headed_browser = await self._playwright.chromium.launch(
+                    headless=False,
+                    args=browser_args,
+                    ignore_default_args=ignore_args
+                )
             return self.headed_browser
 
     async def new_context(self, browser: pw.Browser) -> pw.BrowserContext:
@@ -34,6 +50,12 @@ class MediaFireAgent(AuthMixin, UploadMixin, DownloadMixin):
             viewport={"width": 1920, "height": 1080},
             permissions=["clipboard-read", "clipboard-write"]
         )
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        """)
+        await Stealth().apply_stealth_async(context)
         return context
 
     async def close_all(self):

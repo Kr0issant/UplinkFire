@@ -26,3 +26,4 @@ dist-ssr
 .venv/
 backend/temp/
 __pycache__/
+database.db

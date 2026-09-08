@@ -34,7 +34,7 @@ class UploadMixin:
             if len(unsuccessful_chunk_nos > 0):
                 print(f"File {file_id} ({file_path.name}) uploaded [{len(successful_chunk_nos)}/{len(total_chunks)}] chunks successfully")
                 print(f"Retrying for {len(unsuccessful_chunk_nos)} chunks...")
-                # WIP (retry unsuccessful)
+                # WIP (retry unsuccessful chunks)
             else:
                 print(f"File {file_id} ({file_path.name}) uploaded successfully")
 
