@@ -14,7 +14,8 @@ default_settings = [
     ("first_name", "John"),
     ("last_name", "Doe"),
     ("temp_dir_path", str(TEMP_DIR_PATH)),
-    ("chunk_size", str(DEFAULT_CHUNK_SIZE))
+    ("chunk_size", str(DEFAULT_CHUNK_SIZE)),
+    ("upload_strategy", "least_scatter"), # "least_scatter" / "least_leftovers"
 ]
 
 class Database:
@@ -197,6 +198,4 @@ class Database:
             params.append(account_id)
 
         self.run_write_query(query, params)
-
-db = Database()
-db.add_account("tileb67037@hebase.com", "tileb67037@hebase.com")
+    
