@@ -1,6 +1,6 @@
 import asyncio, uuid
 from enum import Enum
-from typing import Dict, Tuple
+from typing import Dict
 
 class JobType(Enum):
     UPLOAD = 1
@@ -11,7 +11,7 @@ class JobManager:
         self._upload_jobs: Dict[str, asyncio.Queue] = {}
         self._download_jobs: Dict[str, asyncio.Queue] = {}
 
-    def register_job(self, type: JobType) -> Tuple[str, asyncio.Queue]:
+    def register_job(self, type: JobType) -> str:
         job_id = uuid.uuid4().hex
         queue = asyncio.Queue()
 
@@ -19,7 +19,7 @@ class JobManager:
             case JobType.UPLOAD: self._upload_jobs[job_id] = queue
             case JobType.DOWNLOAD: self._download_jobs[job_id] = queue
 
-        return (job_id, queue)
+        return job_id
 
     def get_queue(self, type: JobType, job_id: str) -> asyncio.Queue:
         match type:
