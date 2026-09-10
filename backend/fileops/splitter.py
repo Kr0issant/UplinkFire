@@ -4,7 +4,7 @@ from pathlib import Path
 TEMP_DIR_PATH = Path(__file__).resolve().parent.parent / "temp"
 DEFAULT_CHUNK_SIZE = 512 * 1024 * 1024
 
-def split_file(file_path: str | Path, output_dir: str | Path = TEMP_DIR_PATH, chunk_size: int = DEFAULT_CHUNK_SIZE, chunk_prefix: str = None):
+def split_file(file_path: str | Path, output_dir: str | Path = TEMP_DIR_PATH, chunk_size: int = DEFAULT_CHUNK_SIZE, chunk_prefix: str = None) -> int:
     file_path = Path(file_path)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -13,6 +13,7 @@ def split_file(file_path: str | Path, output_dir: str | Path = TEMP_DIR_PATH, ch
     file_size = file_path.stat().st_size
 
     total_chunks = math.ceil(file_size / chunk_size) if file_size > 0 else 1
+    extra = file_size % chunk_size if file_size % chunk_size != 0 else chunk_size
     padding_width = len(str(total_chunks))
     
     with open(file_path, 'rb') as f:
@@ -27,3 +28,5 @@ def split_file(file_path: str | Path, output_dir: str | Path = TEMP_DIR_PATH, ch
                 chunk_file.write(chunk_data)
                 
             chunk_index += 1
+
+    return extra
