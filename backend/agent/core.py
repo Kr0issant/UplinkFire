@@ -5,10 +5,12 @@ from agent.auth import AuthMixin
 from agent.upload import UploadMixin
 from agent.download import DownloadMixin
 from data.database import Database
+from data.jobs import JobType, JobManager
 
 class MediaFireAgent(AuthMixin, UploadMixin, DownloadMixin):
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, job_manager: JobManager):
         self.db = db
+        self.job_manager = job_manager
         self._playwright = None
         self.headless_browser = None
         self.headed_browser = None

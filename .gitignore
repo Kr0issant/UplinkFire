@@ -27,3 +27,5 @@ dist-ssr
 backend/temp/
 __pycache__/
 database.db
+
+frontend/reference/
