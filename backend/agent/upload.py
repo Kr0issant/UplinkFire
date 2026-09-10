@@ -3,13 +3,14 @@ import playwright.async_api as pw
 from pathlib import Path
 from tqdm import tqdm
 from fileops import splitter
+from data.jobs import JobType, UploadJob
 
 class UploadMixin:
-    async def upload_file(self, file_path: str | Path):
+    async def upload_file_to_job(self, file_path: str | Path) -> str:
         file_path = Path(file_path)
-        temp_dir_path = Path(self.db.get_setting("temp_dir_path"))
         chunk_size = self.db.get_setting("chunk_size", int) * 1024 * 1024
         file_id = ""
+        job_id = ""
 
         try:
             if not file_path.is_file():
@@ -20,10 +21,37 @@ class UploadMixin:
 
             file_id = self.db.add_file(file_path.name, file_size, chunk_size, total_chunks)
 
-            splitter.split_file(file_path, temp_dir_path, chunk_size, file_id)
-            chunk_paths = sorted([Path(p) for p in glob.glob(str(temp_dir_path / f"{file_id}.part_*"))])
+            job_id = self.job_manager.register_upload_job(file_path, file_id, file_size, total_chunks, chunk_size)
+        except Exception as e:
+            print(f"Error wile creating upload job: {e}")
 
-            await self._upload_chunks(chunk_paths, file_id)
+        return job_id
+
+    async def start_upload_job(self, job_id: str):
+        temp_dir_path = Path(self.db.get_setting("temp_dir_path"))
+
+        try:
+            job: UploadJob = self.job_manager.get_job(JobType.UPLOAD, job_id)
+            if not job:
+                print(f"Upload job {job_id} not found")
+                return
+
+            file_id = job.file_id
+            file_path = job.file_path
+            chunk_size = job.chunk_size
+            total_chunks = job.total_chunks
+
+            job.status = "splitting_file"
+            await job.emit_progress()
+            extra = splitter.split_file(file_path, temp_dir_path, chunk_size, file_id)
+            job.chunk_paths = sorted([Path(p) for p in glob.glob(str(temp_dir_path / f"{file_id}.part_*"))])
+
+            for i in range(total_chunks - 1):
+                job.chunks_telemetry[i]["total_bytes"] = chunk_size
+            job.chunks_telemetry[total_chunks - 1]["total_bytes"] = extra
+            await job.emit_progress()
+
+            await self._upload_chunks(job_id)
 
             successful_set = {c["chunk_no"] for c in self.db.get_chunks(file_id=file_id)}
 
@@ -33,18 +61,40 @@ class UploadMixin:
             if len(unsuccessful_chunk_nos) > 0:
                 print(f"File {file_id} ({file_path.name}) uploaded [{len(successful_chunk_nos)}/{total_chunks}] chunks successfully")
                 print(f"Retrying for {len(unsuccessful_chunk_nos)} chunks...")
+                job.status = "failed"
+                await job.emit_progress()
                 # WIP (retry unsuccessful chunks)
             else:
                 print(f"File {file_id} ({file_path.name}) uploaded successfully")
+                job.status = "cleaning_temp"
+                await job.emit_progress()
+                for chunk_path in job.chunk_paths:
+                    try:
+                        chunk_path.unlink(missing_ok=True)
+                    except Exception as e:
+                        print(f"Failed to delete chunk {chunk_path}: {e}")
+                job.status = "completed"
+                await job.emit_progress()
 
         except Exception as e:
-            print(f"Error wile uploading file: {e}")
+            print(f"Error while uploading file: {e}")
+            job.status = "failed"
+            await job.emit_progress()
             # self.db.delete_file(file_id)
             # self.db.delete_chunks(file_id = file_id)
 
-    async def _upload_chunks(self, chunk_paths: list[Path], file_id: str):
+    async def _upload_chunks(self, job_id: str):
+        job: UploadJob = self.job_manager.get_job(JobType.UPLOAD, job_id)
+        if not job:
+            return
+        file_id = job.file_id
+        chunk_paths = job.chunk_paths
+
         strategy = self.db.get_setting("upload_strategy", str, "least_scatter")
         browser = await self.start_browser(headless=True)
+
+        job.status = "allocating_space"
+        await job.emit_progress()
         
         chunk_tasks = [
             {"chunk_no": i, "path": p, "size": p.stat().st_size} 
@@ -133,9 +183,13 @@ class UploadMixin:
         for account_id, chunks in assigned_plan:
             context = await self.new_context(browser)
             try:
+                job.status = "authenticating"
+                await job.emit_progress()
                 await self.login(context, account_id)
+                job.status = "uploading_chunks"
+                await job.emit_progress()
                 for c in chunks:
-                    download_url = await self._upload_chunk_in_context(context, c["path"])
+                    download_url = await self._upload_chunk_in_context(context, job_id, c["chunk_no"])
                     if download_url:
                         self.db.add_chunk(
                             file_id=file_id,
@@ -154,11 +208,13 @@ class UploadMixin:
             finally:
                 await context.close()
 
-    async def _upload_chunk_in_context(self, context: pw.BrowserContext, chunk_path: str | Path) -> str:
+    async def _upload_chunk_in_context(self, context: pw.BrowserContext, job_id: str, chunk_no: int) -> str:
         download_url = ""
         timeout_duration = self.db.get_setting("timeout_duration", int) * 1000
-        chunk_path = Path(chunk_path)
-        chunk_size = chunk_path.stat().st_size
+        job: UploadJob = self.job_manager.get_job(JobType.UPLOAD, job_id)
+        if not job:
+            return ""
+        chunk_path = Path(job.chunk_paths[chunk_no])
 
         page = await context.new_page()
         try:
@@ -181,7 +237,7 @@ class UploadMixin:
 
             await page.get_by_role("button", name="Start upload").click(force=True)
 
-            await self._monitor_upload(page, chunk_size)
+            await self._monitor_upload(page, job_id, chunk_no)
 
             await page.locator('span:has-text("Copy Link")').click(force=True)
             await asyncio.sleep(0.5)
@@ -193,7 +249,14 @@ class UploadMixin:
 
         return download_url
 
-    async def _monitor_upload(self, page: pw.Page, file_size: int) -> bool:
+    async def _monitor_upload(self, page: pw.Page, job_id: str, chunk_no: int) -> bool:
+        job: UploadJob = self.job_manager.get_job(JobType.UPLOAD, job_id)
+        if not job:
+            return False
+        file_size = job.chunks_telemetry[chunk_no]["total_bytes"]
+        job.chunks_telemetry[chunk_no]["status"] = "uploading"
+        await job.emit_progress()
+        
         pbar = tqdm(total=file_size, desc="Uploading", unit="B", unit_scale=True, unit_divisor=1024)
         last_uploaded_bytes = 0
         timeout_duration = self.db.get_setting("timeout_duration", int) * 1000
@@ -202,6 +265,9 @@ class UploadMixin:
             is_completed = await page.get_by_text("Upload Completed").is_visible(timeout=timeout_duration)
             if is_completed:
                 pbar.update(file_size - last_uploaded_bytes)
+                job.chunks_telemetry[chunk_no]["status"] = "completed"
+                job.chunks_telemetry[chunk_no]["bytes_uploaded"] = job.chunks_telemetry[chunk_no]["total_bytes"]
+                await job.emit_progress()
                 break
                 
             try:
@@ -213,11 +279,15 @@ class UploadMixin:
                     current_uploaded_bytes = int(file_size * (current_percentage / 100))
                     
                     if current_uploaded_bytes > last_uploaded_bytes:
+                        job.chunks_telemetry[chunk_no]["bytes_uploaded"] = current_uploaded_bytes
                         pbar.update(current_uploaded_bytes - last_uploaded_bytes)
                         last_uploaded_bytes = current_uploaded_bytes
+                        await job.emit_progress()
                     
             except Exception as e:
                 pbar.close()
+                job.chunks_telemetry[chunk_no]["status"] = "failed"
+                await job.emit_progress()
                 raise e
                 
             await asyncio.sleep(0.2)
