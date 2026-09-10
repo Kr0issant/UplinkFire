@@ -96,6 +96,10 @@ class Database:
     def set_setting(self, setting: str, value: any):
         self.run_write_query("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (setting, str(value)))
 
+    def get_all_settings(self) -> dict:
+        rows = self.run_read_query("SELECT key, value FROM settings", n=0)
+        return {r["key"]: r["value"] for r in rows} if rows else {}
+
     # === Accounts ===
 
     def get_account(self, id: str) -> sqlite3.Row:
@@ -124,6 +128,16 @@ class Database:
     def update_account_last_accessed(self, id: str):
         timestamp = datetime.now(timezone.utc).isoformat()
         self.run_write_query("UPDATE accounts SET last_accessed = ? WHERE id = ?", (timestamp, id))
+
+    def update_account(self, id: str, email: str = None, password: str = None, free_space: int = None):
+        fields, params = [], []
+        if email is not None:      fields.append("email = ?");      params.append(email)
+        if password is not None:   fields.append("password = ?");   params.append(password)
+        if free_space is not None: fields.append("free_space = ?"); params.append(free_space)
+        if not fields:
+            return
+        params.append(id)
+        self.run_write_query(f"UPDATE accounts SET {', '.join(fields)} WHERE id = ?", params)
 
     def delete_account(self, id: str):
         self.run_write_query("DELETE FROM accounts WHERE id = ?", (id,))
